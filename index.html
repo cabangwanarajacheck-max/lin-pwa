@@ -1,374 +1,82 @@
 <!DOCTYPE html>
 <html lang="id">
 <head>
-  <link rel="icon" type="image/png" href="favicon.ico">
-  <link rel="manifest" href="manifest.json">
   <meta charset="UTF-8">
   <title>Lin - Asisten Tsundere</title>
-  <style>
-    body { font-family: sans-serif; background:#f4f4f4; margin:0; padding:0; }
-    #chat { max-width:500px; margin:20px auto; background:#fff; border-radius:12px; padding:15px; height:70vh; overflow-y:auto; box-shadow:0 4px 10px rgba(0,0,0,.1); }
-    .msg { margin:8px 0; padding:6px 10px; border-radius:8px; display:inline-block; max-width:80%; white-space:pre-line; }
-    .user { text-align:right; }
-    .user .msg { background:#e0e0e0; }
-    .lin { text-align:left; }
-    .lin .msg { background:#fce4ec; color:#880e4f; }
-    #input { display:flex; max-width:500px; margin:0 auto; padding:10px; }
-    #input input { flex:1; padding:10px; border-radius:8px; border:1px solid #ccc; }
-    #input button { margin-left:8px; padding:10px 16px; border:none; border-radius:8px; background:#e91e63; color:#fff; cursor:pointer; }
-  </style>
+  <link rel="icon" type="image/png" href="favicon.ico">
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-
-<div id="chat"></div>
-<div id="input">
-  <input type="text" id="text" placeholder="Ketik pesan...">
-  <button onclick="send()">Kirim</button>
+  <div id="topbar">
+  <div id="title"><span class="dot"></span> Lin — Asisten Tsundere</div>
+  <div id="actions">
+    <button id="exportBtn" title="Export data JSON">⬇️ Export</button>
+    <button id="importBtn" title="Import data JSON">⬆️ Import</button>
+    <button id="themeToggle" title="Ganti tema">🌗 Tema</button>
+    <input type="file" id="importFile" accept="application/json" class="hidden">
+  </div>
 </div>
 
-<script>
-  // --- Notifikasi & Service Worker ---
-  if (Notification.permission !== "granted") {
-    Notification.requestPermission();
-  }
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/service-worker.js')
-      .then(() => console.log("Service Worker siap!"))
+  <div id="wrap">
+    <div id="chatSearch">
+  <input type="text" id="chatSearchInput" placeholder="🔍 Cari di chat...">
+</div>
+    <div id="chat"></div>
+    <div id="input">
+      <input type="text" id="text" placeholder="Ketik pesan...">
+      <button id="sendBtn">Kirim</button>
+    </div>
+  </div>
+
+  <section id="cards">
+    <h2>Data Kamu</h2>
+    <div id="searchBox">
+     <input type="text" id="searchInput" placeholder="🔍 Cari di semua card...">
+  </div>
+
+    <div class="card-container">
+      <div id="reminderCards"></div>
+      <div id="noteCards"></div>
+      <div id="scheduleCards"></div>
+      <div id="alarmCards"></div>
+      <div id="moodCards"></div>
+    </div>
+  </section>
+
+  <!-- Onboarding (sekali tampil) -->
+  <div id="onboard" class="modal hidden">
+    <div class="card">
+      <h3>Hei! Jangan bikin aku ngomel ya 😤</h3>
+      <p>Aku bisa bikin <b>pengingat</b>, <b>catatan</b>, dan <b>jadwal</b> — lengkap sama notifikasi.</p>
+      <p>Contoh:
+      <br>• <code>rutinitas jam 7 pagi bangun</code>
+      <br>• <code>rutinitas tiap senin jumat jam 8 rapat</code>
+      <br>• <code>note beli kopi</code></p>
+      <button id="startBtn">Oke, mulai!</button>
+    </div>
+  </div>
+
+<!-- 🔵 Latihan Napas Modal -->
+<div id="breathModal" class="hidden">
+  <div class="modal-content">
+    <h2>Latihan Napas 4-4-6</h2>
+    <div id="breathCircle"></div>
+    <p id="breathText">Tarik napas...</p>
+    <button onclick="closeBreath()">Tutup</button>
+  </div>
+</div>
+
+
+  <script src="script.js"></script>
+  <script>
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("service-worker.js")
+      .then(() => console.log("Service Worker terdaftar"))
       .catch(err => console.error("SW gagal:", err));
   }
-
-  // --- Data Local Storage ---
-  let reminders = JSON.parse(localStorage.getItem("reminders") || "[]"); // rutinitas
-  let notes = JSON.parse(localStorage.getItem("notes") || "[]"); // note
-  let schedules = JSON.parse(localStorage.getItem("schedules") || "[]");
-  let alarms = JSON.parse(localStorage.getItem("alarms") || "[]");
-
-  function saveData(){
-    localStorage.setItem("reminders", JSON.stringify(reminders));
-    localStorage.setItem("notes", JSON.stringify(notes));
-    localStorage.setItem("schedules", JSON.stringify(schedules));
-    localStorage.setItem("alarms", JSON.stringify(alarms));
-  }
-
-  // --- CRUD Reminder khusus ---
-  function saveReminders() {
-    localStorage.setItem("reminders", JSON.stringify(reminders));
-  }
-  function addReminder(text, time) {
-    reminders.push({ text, time, done: false });
-    saveReminders();
-    addMsg("lin", `udah aku masukin pengingat: "${text}" jam ${time} 😤`);
-  }
-  function listReminders() {
-    if (reminders.length === 0) {
-      addMsg("lin", "nggak ada pengingat 😑");
-      return;
-    }
-    let list = reminders.map((r, i) => `${i+1}. ${r.text} - ${r.time}`).join("\n");
-    addMsg("lin", "ini pengingatmu:\n" + list);
-  }
-  function deleteReminder(index) {
-    if (reminders[index]) {
-      addMsg("lin", `pengingat "${reminders[index].text}" udah aku hapus 🙄`);
-      reminders.splice(index, 1);
-      saveReminders();
-    }
-  }
-
-  // --- UI Chat ---
-  let chat = document.getElementById("chat");
-  function addMsg(sender, text){
-    let wrapper = document.createElement("div");
-    wrapper.className = sender;
-    let div = document.createElement("div");
-    div.className = "msg";
-    div.innerText = text;
-    wrapper.appendChild(div);
-    chat.appendChild(wrapper);
-    chat.scrollTop = chat.scrollHeight;
-    if(sender === "lin"){ speakSoft(text); }
-  }
-
-  function speakSoft(text){
-    let utter = new SpeechSynthesisUtterance(text);
-    utter.lang = "id-ID";
-    utter.pitch = 1.1;
-    utter.rate = 0.95;
-    let voices = speechSynthesis.getVoices();
-    let voice = voices.find(v => 
-      v.lang.includes("id") && (v.name.toLowerCase().includes("female") || v.name.toLowerCase().includes("perempuan"))
-    );
-    if(voice) utter.voice = voice;
-    speechSynthesis.speak(utter);
-  }
-
-  function cleanCommand(msg){
-    return msg
-      .replace(/\blin\b/g, "")
-      .replace(/\bbantuin\b/g, "")
-      .replace(/\btolong\b/g, "")
-      .replace(/\bbuka\b/g, "")
-      .trim();
-  }
-
-  function send(){
-    let input = document.getElementById("text");
-    let text = input.value.trim();
-    if(!text) return;
-    addMsg("user", text);
-    input.value = "";
-    handleInput(cleanCommand(text.toLowerCase()));
-  }
-  document.getElementById("text").addEventListener("keypress", function(e){
-    if(e.key === "Enter"){ send(); }
-  });
-
-  function formatList(arr, label){
-    if(arr.length){
-      return label + ":\n" + arr.map((item,i)=> (i+1) + ". " + item).join("\n");
-    } else {
-      return label + " kosong 😒";
-    }
-  }
-
-  // --- parsing waktu natural ---
-  function parseTime(text){
-    text = text.toLowerCase();
-    let hour = null, minute = 0;
-
-    let match = text.match(/jam\s*(\d{1,2})([:.](\d{2}))?/);
-    if(match){
-      hour = parseInt(match[1]);
-      if(match[3]) minute = parseInt(match[3]);
-    }
-
-    if(text.includes("pagi")){
-      if(hour === 12) hour = 0;
-    }
-    else if(text.includes("siang") || text.includes("sore") || text.includes("malam")){
-      if(hour < 12) hour += 12;
-    }
-
-    if(text.includes("an") && !match?.[3]) minute = 0;
-
-    if(hour !== null){
-      return ("0" + hour).slice(-2) + ":" + ("0" + minute).slice(-2);
-    }
-    return null;
-  }
-
-  // --- parsing repeat ---
-  function parseRepeat(text){
-    text = text.toLowerCase();
-    if(text.includes("tiap hari")){
-      return "daily";
-    }
-    let days = [];
-    let daftarHari = ["minggu","senin","selasa","rabu","kamis","jumat","sabtu"];
-    daftarHari.forEach(h=>{
-      if(text.includes(h)) days.push(h);
-    });
-    return days.length ? days : null;
-  }
-
-  // --- bersihin teks alarm ---
-  function cleanTextForAlarm(text){
-    let cleaned = text.toLowerCase();
-    cleaned = cleaned.replace(/\b(note|rutinitas|jadwal|alarm)\b/g, "");
-    cleaned = cleaned.replace(/\b(jam|pagi|siang|sore|malam|an|tiap|hari|senin|selasa|rabu|kamis|jumat|sabtu|minggu)\b/g, "");
-    cleaned = cleaned.replace(/\s+/g, " ").trim();
-    return cleaned || "aktivitasmu";
-  }
-
-  function addAlarm(text){
-    let time = parseTime(text);
-    let core = cleanTextForAlarm(text);
-    let repeat = parseRepeat(text);
-    if(time){
-      alarms.push({time: time, text: core, done: false, repeat: repeat});
-      saveData();
-    }
-  }
-
-  // --- cek alarm tiap menit ---
-  setInterval(()=>{
-    let now = new Date();
-    let hh = ("0"+now.getHours()).slice(-2);
-    let mm = ("0"+now.getMinutes()).slice(-2);
-    let current = hh+":"+mm;
-    let day = ["minggu","senin","selasa","rabu","kamis","jumat","sabtu"][now.getDay()];
-
-    alarms.forEach(a=>{
-      let matchHari = false;
-      if(a.repeat === "daily") matchHari = true;
-      else if(Array.isArray(a.repeat)) matchHari = a.repeat.includes(day);
-      else matchHari = true;
-
-      if(matchHari){
-        if(a.time === current && !a.done){
-          addMsg("lin", `Hei! sekarang jam ${a.time}, waktunya ${a.text}! 😤`);
-          if(a.repeat) { a.done = false; } else { a.done = true; }
-          saveData();
-        }
-      }
-
-      if(!a.repeat && !a.done){
-        let [h,m] = a.time.split(":").map(Number);
-        let alarmDate = new Date();
-        alarmDate.setHours(h,m,0,0);
-        if(now > alarmDate){
-          addMsg("lin", `Hei! tadi jam ${a.time} kamu harusnya ${a.text}, telat dasar malesan 😒`);
-          a.done = true;
-          saveData();
-        }
-      }
-    });
-  }, 60000);
-
-  // --- handle input ---
-  function handleInput(msg){
-    // tambah data
-    if(msg.includes("rutinitas")){
-      reminders.push(msg);
-      addAlarm(msg);
-      saveData();
-      addMsg("lin", "udah aku masukin ke rutinitasmu 😤");
-    }
-    else if(msg.includes("note")){
-      notes.push(msg);
-      addAlarm(msg);
-      saveData();
-      addMsg("lin", "udah kucatat di note 🙄");
-    }
-    else if(msg.includes("jadwal")){
-      if(msg.includes("apa") || msg.includes("ada") || msg.includes("gimana") || msg.includes("lihat") || msg.includes("buka")){
-        addMsg("lin", formatList(schedules, "jadwalmu"));
-      } else {
-        schedules.push(msg);
-        addAlarm(msg);
-        saveData();
-        addMsg("lin", "oke, aku masukin ke jadwalmu. jangan telat ya!");
-      }
-    }
-
-    // lihat data
-    else if(msg.includes("apa") || msg.includes("ada") || msg.includes("lihat") || msg.includes("buka")){
-      if(msg.includes("rutinitas")){
-        addMsg("lin", formatList(reminders, "rutinitasmu"));
-      } else if(msg.includes("note")){
-        addMsg("lin", formatList(notes, "note-mu"));
-      } else if(msg.includes("jadwal")){
-        addMsg("lin", formatList(schedules, "jadwalmu"));
-      }
-    }
-
-    // hapus data
-    else if(msg.includes("hapus")){
-      let targetArr = null;
-      if(msg.includes("rutinitas")) targetArr = reminders;
-      else if(msg.includes("note")) targetArr = notes;
-      else if(msg.includes("jadwal")) targetArr = schedules;
-      else if(msg.includes("alarm")) targetArr = alarms;
-
-      if(targetArr){
-        if(msg.includes("semua")){
-          targetArr.length = 0;
-          saveData();
-          addMsg("lin", "semua data udah aku hapus. puas? 😒");
-        } else if(msg.includes("terakhir")){
-          targetArr.pop();
-          saveData();
-          addMsg("lin", "yang terakhir udah aku buang 😤");
-        } else if(msg.match(/ke-\d+/)){
-          let index = parseInt(msg.match(/ke-(\d+)/)[1]) - 1;
-          if(targetArr[index]){
-            targetArr.splice(index,1);
-            saveData();
-            addMsg("lin", `udah aku hapus yang ke-${index+1} 🙄`);
-          }
-        }
-      }
-    }
-
-    // edit data
-    else if(msg.includes("edit")){
-      if(msg.match(/ke-\d+/) && msg.includes("jadi")){
-        let index = parseInt(msg.match(/ke-(\d+)/)[1]) - 1;
-        let newText = msg.split("jadi")[1].trim();
-
-        if(msg.includes("rutinitas") && reminders[index]){
-          reminders[index] = newText;
-          addAlarm(newText);
-          saveData();
-          addMsg("lin", "rutinitas ke-" + (index+1) + " udah aku ganti 😤");
-        } 
-        else if(msg.includes("note") && notes[index]){
-          notes[index] = newText;
-          addAlarm(newText);
-          saveData();
-          addMsg("lin", "note ke-" + (index+1) + " udah aku ganti 🙄");
-        } 
-        else if(msg.includes("jadwal") && schedules[index]){
-          schedules[index] = newText;
-          addAlarm(newText);
-          saveData();
-          addMsg("lin", "jadwal ke-" + (index+1) + " udah aku ganti 😏");
-        } 
-        else if(msg.includes("alarm") && alarms[index]){
-          alarms[index].text = newText;
-          saveData();
-          addMsg("lin", "alarm ke-" + (index+1) + " udah aku ganti ⏰");
-        }
-      }
-    }
-
-    // lihat alarm
-    else if(msg.includes("alarm")){
-      if(alarms.length){
-        let list = "alarm aktif:\n" + alarms.map((a,i)=>{
-          let repeatInfo = "sekali";
-          if(a.repeat === "daily") repeatInfo = "tiap hari";
-          else if(Array.isArray(a.repeat)) repeatInfo = a.repeat.join(", ");
-          return (i+1) + ". " + a.time + " " + a.text + " (" + repeatInfo + ")";
-        }).join("\n");
-        addMsg("lin", list);
-      } else {
-        addMsg("lin", "nggak ada alarm yang aktif 😑");
-      }
-    }
-
-    // fitur/help
-    else if(msg.includes("fitur") || msg.includes("help") || msg.includes("cara")){
-      addMsg("lin", `dasar pelupa 😒 ini fiturku:
-- "rutinitas ..." buat rutinitas/pengingat
-- "note ..." buat catatan
-- "jadwal ..." buat jadwal
-- bisa hapus, edit, liat semua data
-- alarm: 
-   • rutinitas jam 7 pagi bangun
-   • rutinitas tiap hari jam 5 sore olahraga
-   • rutinitas tiap senin jumat minggu jam 8 rapat
-- cek alarm aktif: "lihat alarm"
-- perintah natural: "hapus", "edit", "buka", "lihat", "tolong", "bantuin"
-- ngomong aja pake santai, aku ngerti kok 🙄`);
-    }
-
-    // fallback
-    else {
-      let replies = [
-        "huh? aku nggak ngerti maksudmu 😒",
-        "jelasin yang bener dong...",
-        "apaan sih, bikin ribet aja 🙄"
-      ];
-      addMsg("lin", replies[Math.floor(Math.random()*replies.length)]);
-    }
-  }
-
-  // --- Greeting awal ---
-  addMsg("lin", "Huh? Jadi kamu yang udah instal aku? Jangan bikin aku nyesel ya 😤");
-
-  // pastikan voice list sudah load
-  speechSynthesis.onvoiceschanged = () => {};
 </script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
 </body>
 </html>

@@ -7,7 +7,7 @@ const FILES_TO_CACHE = [
   "/icon-512.png"
 ];
 
-// pas pertama kali install, simpan file2 penting
+// Pas install → cache file penting
 self.addEventListener("install", event => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(cache => {
@@ -16,11 +16,20 @@ self.addEventListener("install", event => {
   );
 });
 
-// kalau user buka lagi, coba ambil dari cache dulu
+// Pas fetch → coba ambil dari cache dulu
 self.addEventListener("fetch", event => {
   event.respondWith(
     caches.match(event.request).then(response => {
       return response || fetch(event.request);
     })
   );
+});
+
+// Notifikasi push (biar bisa showNotification dari app)
+self.addEventListener("push", event => {
+  const data = (event.data && event.data.json()) || {};
+  self.registration.showNotification(data.title || "Lin Tsundere", {
+    body: data.body || "Hei! Ada sesuatu nih!",
+    icon: "icon-192.png"
+  });
 });
