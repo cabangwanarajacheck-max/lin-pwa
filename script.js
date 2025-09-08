@@ -1,876 +1,716 @@
 // =============================
-// 📦 Helper: Notifikasi Browser
+// 🔴 IndexedDB Setup + Fallback
 // =============================
-function showNotification(title, body) {
-  if (Notification.permission === "granted" && navigator.serviceWorker) {
-    navigator.serviceWorker.getRegistration().then(reg => {
-      if (reg) {
-        reg.showNotification(title, {
-          body: body,
-          icon: "icon-192.png"
-        });
-      }
-    });
-  }
-}
-
-function getAllData() {
-  return {
-    meta: { app: "LinTsundere", version: 1, exportedAt: new Date().toISOString() },
-    reminders, notes, schedules, alarms
-  };
-}
-
-function download(filename, text) {
-  const blob = new Blob([text], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  URL.revokeObjectURL(url);
-  a.remove();
-}
-
-function exportData() {
-  const data = getAllData();
-  const filename = "lin-data-" + new Date().toISOString().replace(/[:.]/g, "-") + ".json";
-  download(filename, JSON.stringify(data, null, 2));
-  addMsg("lin", "nih, data kamu udah aku export. Simpen baik-baik ya 😤");
-}
-
-async function importDataFromJSON(json) {
-  try {
-    const incoming = typeof json === "string" ? JSON.parse(json) : json;
-
-    // payload bisa langsung punya field, atau nested di .data
-    const src = (incoming && (incoming.reminders || incoming.notes || incoming.schedules || incoming.alarms))
-  ? incoming
-  : (incoming && incoming.data) || null;
-
-    if (!src) throw new Error("Format JSON tidak dikenal.");
-
-    const arr = v => Array.isArray(v) ? v : [];
-
-    // Normalisasi bentuk jika ada yang masih string
-    reminders = arr(src.reminders).map(x => typeof x === "string" ? { text:x, time:null, repeat:null, done:false } : x);
-    notes     = arr(src.notes).map(x => typeof x === "string" ? { text:x, createdAt:new Date().toISOString() } : x);
-    schedules = arr(src.schedules).map(x => typeof x === "string" ? { text:x, date:new Date().toISOString().split("T")[0], status:"pending" } : x);
-    alarms    = arr(src.alarms).map(x => typeof x === "string" ? { id:"a-"+Date.now(), text:x, time:null, repeat:null, status:"active", createdAt:new Date().toISOString() } : x);
-
-    await saveData();
-    addMsg("lin", `import selesai. ${reminders.length} rutinitas, ${notes.length} note, ${schedules.length} jadwal, ${alarms.length} alarm. Jangan ngaco lagi ya 🙄`);
-  } catch (err) {
-    console.error(err);
-    addMsg("lin", "format JSON-nya bikin aku pusing... benerin dulu! 😒");
-  }
-}
-
-// ==================================
-// 📦 IndexedDB Wrapper (Key-Value)
-// ==================================
 const DB_NAME = "linDB";
-const DB_VERSION = 1;
-let dbPromise = null;
+const DB_VERSION = 2; // versi dinaikkan biar objectStore lengkap
+let db = null;
 
 function openDB() {
-  if (dbPromise) return dbPromise;
-  dbPromise = new Promise((resolve, reject) => {
+  return new Promise((resolve, reject) => {
+    if (!("indexedDB" in window)) {
+      console.warn("IndexedDB tidak tersedia, fallback ke localStorage");
+      resolve(null);
+      return;
+    }
+
     const req = indexedDB.open(DB_NAME, DB_VERSION);
+
     req.onupgradeneeded = (e) => {
-      const db = e.target.result;
-      if (!db.objectStoreNames.contains("kv")) {
-        db.createObjectStore("kv", { keyPath: "key" });
+      db = e.target.result;
+
+      if (!db.objectStoreNames.contains("reminders")) {
+        db.createObjectStore("reminders", { keyPath: "id", autoIncrement: true });
+      }
+      if (!db.objectStoreNames.contains("notes")) {
+        db.createObjectStore("notes", { keyPath: "id", autoIncrement: true });
+      }
+      if (!db.objectStoreNames.contains("schedules")) {
+        db.createObjectStore("schedules", { keyPath: "id", autoIncrement: true });
+      }
+      if (!db.objectStoreNames.contains("moods")) {
+        db.createObjectStore("moods", { keyPath: "id", autoIncrement: true });
+      }
+      if (!db.objectStoreNames.contains("pet")) {
+        db.createObjectStore("pet", { keyPath: "id" });
       }
     };
-    req.onsuccess = (e) => resolve(e.target.result);
-    req.onerror = (e) => reject(e.target.error);
+
+    req.onsuccess = (e) => {
+      db = e.target.result;
+      resolve(db);
+    };
+
+    req.onerror = (e) => {
+      console.error("DB error:", e);
+      reject(e);
+    };
   });
-  return dbPromise;
 }
 
-async function idbSet(key, value) {
-  try {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction("kv", "readwrite");
-      const store = tx.objectStore("kv");
-      store.put({ key, value });
-      tx.oncomplete = () => resolve(true);
-      tx.onerror = e => reject(e.target.error);
-    });
-  } catch (e) {
-    console.warn("IndexedDB gagal, fallback localStorage", e);
-    localStorage.setItem(key, JSON.stringify(value));
-  }
+function dbGetAll(store) {
+  return new Promise((resolve) => {
+    if (!db) { // fallback localStorage
+      if (store === "pet") {
+        const p = JSON.parse(localStorage.getItem("pet") || '{"streak":0,"lastActive":""}');
+        resolve([p]);
+      } else {
+        resolve(JSON.parse(localStorage.getItem(store) || "[]"));
+      }
+      return;
+    }
+    const tx = db.transaction(store, "readonly");
+    const os = tx.objectStore(store);
+    const req = os.getAll();
+    req.onsuccess = () => resolve(req.result || []);
+    req.onerror = () => resolve([]);
+  });
 }
 
-async function idbGet(key) {
-  try {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction("kv", "readonly");
-      const store = tx.objectStore("kv");
-      const req = store.get(key);
-      req.onsuccess = () => resolve(req.result?.value);
-      req.onerror = e => reject(e.target.error);
-    });
-  } catch (e) {
-    console.warn("IndexedDB gagal, fallback localStorage", e);
-    const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : null;
-  }
+function dbSetAll(store, data) {
+  return new Promise((resolve) => {
+    if (!db) { // fallback localStorage
+      if (store === "pet") {
+        localStorage.setItem("pet", JSON.stringify(data[0] || { streak: 0, lastActive: "" }));
+      } else {
+        localStorage.setItem(store, JSON.stringify(data));
+      }
+      resolve();
+      return;
+    }
+    const tx = db.transaction(store, "readwrite");
+    const os = tx.objectStore(store);
+    os.clear();
+    (data || []).forEach((item) => os.put(item));
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => resolve();
+  });
 }
 
-// =======================
-// 🎨 Preferensi Tema
-// =======================
-async function applyTheme(theme) {
-  document.documentElement.setAttribute("data-theme", theme);
-  await idbSet("theme", theme);
-}
-
-async function loadTheme() {
-  let theme = await idbGet("theme");
-  if (theme) {
-    document.documentElement.setAttribute("data-theme", theme);
-  }
-}
-
-// =======================
-// 📊 State Awal Data
-// =======================
+// =============================
+// 🔴 Variabel Global
+// =============================
 let reminders = [];
 let notes = [];
 let schedules = [];
-let alarms = [];
 let moods = [];
-let currentGame = null;
-let suitMode = false; // status game suit
-let breathInterval = null;
+let pet = { streak: 0, lastActive: "" };
+let pendingAction = null;
+let gameNumber = null;
 
-// =======================
-// 📥 Muat Data Pertama
-// =======================
+// =============================
+// 💾 Load & Save
+// =============================
 async function loadData() {
-  reminders = (await idbGet("reminders")) || [];
-  notes     = (await idbGet("notes")) || [];
-  schedules = (await idbGet("schedules")) || [];
-  alarms    = (await idbGet("alarms")) || [];
-  moods     = (await idbGet("moods")) || [];
-
-  // 🔄 Migrasi dari localStorage lama → IndexedDB
-  if (!reminders.length && localStorage.getItem("reminders")) {
-    reminders = JSON.parse(localStorage.getItem("reminders") || "[]");
-    notes     = JSON.parse(localStorage.getItem("notes") || "[]");
-    schedules = JSON.parse(localStorage.getItem("schedules") || "[]");
-    alarms    = JSON.parse(localStorage.getItem("alarms") || "[]");
-    migrateData();
-    await saveData();
-    localStorage.clear();
-  }
-}
-
-// 💾 Simpan Data ke IndexedDB
-async function saveData() {
-  await idbSet("reminders", reminders);
-  await idbSet("notes", notes);
-  await idbSet("schedules", schedules);
-  await idbSet("alarms", alarms);
-  await idbSet("moods", moods);
-renderCards();
-}
-
-// Fungsi filter global
-function filterCards(keyword) {
-  keyword = keyword.toLowerCase();
-
-  // ambil semua .card di tiap container
-  document.querySelectorAll('#reminderCards .card, #noteCards .card, #scheduleCards .card, #alarmCards .card')
-    .forEach(card => {
-      let text = card.innerText.toLowerCase();
-      if(text.includes(keyword)){
-        card.style.display = "";
-      } else {
-        card.style.display = "none";
-      }
-    });
-}
-
-// =======================
-// 🔍 Search Chat
-// =======================
-function filterChat(keyword){
-  keyword = keyword.toLowerCase();
-  document.querySelectorAll('#chat .msg').forEach(msg => {
-    let text = msg.innerText.toLowerCase();
-    if(text.includes(keyword)){
-      msg.parentElement.style.display = ""; // tampilkan pesan
-    } else {
-      msg.parentElement.style.display = "none"; // sembunyikan pesan
-    }
-  });
-}
-
-document.getElementById("chatSearchInput").addEventListener("input", function(e){
-  filterChat(e.target.value);
-});
-
-// Listener search
-document.getElementById("searchInput").addEventListener("input", function(e){
-  filterCards(e.target.value);
-});
-
-// =======================
-// 🎬 Onboarding Modal
-// =======================
-async function checkOnboard() {
-  let done = await idbGet("onboardDone");
-  if (!done) {
-    document.getElementById("onboard").classList.remove("hidden");
-  }
-}
-document.getElementById("startBtn").addEventListener("click", async () => {
-  document.getElementById("onboard").classList.add("hidden");
-  await idbSet("onboardDone", true);
-});
-
-// =======================
-// 🔄 Migrasi Struktur Data
-// =======================
-function migrateData() {
-  reminders = reminders.map(r => typeof r === "string" ? { text: r, time: null, repeat: null, done: false } : r);
-  notes     = notes.map(n => typeof n === "string" ? { text: n, createdAt: new Date().toISOString() } : n);
-  schedules = schedules.map(s => typeof s === "string" ? { text: s, date: new Date().toISOString().split("T")[0], status: "pending" } : s);
-  alarms    = alarms.map(a => typeof a === "string" ? { id: "a-" + Date.now(), text: a, time: null, repeat: null, status: "active", createdAt: new Date().toISOString() } : a);
-}
-
-// =======================
-// 💬 UI Chat + TTS
-// =======================
-let chat = document.getElementById("chat");
-
-function addMsg(sender, text) {
-  let wrapper = document.createElement("div");
-  wrapper.className = "msg-row " + sender;
-
-  let ava = document.createElement("div");
-  ava.className = "avatar " + sender;
-  ava.textContent = sender === "lin" ? "L" : "U";
-
-  let div = document.createElement("div");
-  div.className = "msg";
-  div.innerText = text;
-
-  if (sender === "user") {
-    wrapper.appendChild(div);
-    wrapper.appendChild(ava);
-  } else {
-    wrapper.appendChild(ava);
-    wrapper.appendChild(div);
-  }
-
-  chat.appendChild(wrapper);
-  scrollBottom();
-
-  if (sender === "lin") { speakSoft(text); }
-}
-
-// 🔊 Text-to-Speech
-function speakSoft(text) {
-  let utter = new SpeechSynthesisUtterance(text);
-  utter.lang = "id-ID";
-  utter.pitch = 1.1;
-  utter.rate = 0.95;
-  let voices = speechSynthesis.getVoices();
-  let voice = voices.find(v =>
-    v.lang.includes("id") && (v.name.toLowerCase().includes("female") || v.name.toLowerCase().includes("perempuan"))
-  );
-  if (voice) utter.voice = voice;
-  speechSynthesis.speak(utter);
-}
-
-// =======================
-// 🧹 Helper Command
-// =======================
-function cleanCommand(msg) {
-  return msg
-    .replace(/\blin\b/g, "")
-    .replace(/\bbantuin\b/g, "")
-    .replace(/\btolong\b/g, "")
-    .replace(/\bbuka\b/g, "")
-    .trim();
-}
-
-// 🚀 Kirim Pesan
-function send() {
-  let input = document.getElementById("text");
-  let text = input.value.trim();
-  if (!text) return;
-  addMsg("user", text);
-  input.value = "";
-  handleInput(cleanCommand(text.toLowerCase()));
-}
-
-// Event Input (Enter / Ctrl+Enter)
-document.getElementById("text").addEventListener("keypress", function (e) {
-  if (e.key === "Enter") { send(); }
-});
-
-document.getElementById("text").addEventListener("keydown", function (e) {
-  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { send(); }
-});
-
-document.getElementById("sendBtn").addEventListener("click", send);
-
-// =======================
-// 🎨 Theme Toggle
-// =======================
-document.getElementById("themeToggle").addEventListener("click", async () => {
-  let current = document.documentElement.getAttribute("data-theme");
-  let next = current === "dark" ? "light" : "dark";
-  await applyTheme(next);
-});
-
-// =======================
-// 📜 Utils Tambahan
-// =======================
-
-// Scroll halus
-function scrollBottom() {
-  chat.scrollTo({ top: chat.scrollHeight, behavior: "smooth" });
-}
-
-// Format list item
-function formatList(arr, label) {
-  if (arr.length) {
-    return label + ":\n" + arr.map((item, i) => {
-      if (typeof item === "string") return (i + 1) + ". " + item;
-      let waktu = item.time ? ` - ${item.time}` : "";
-      return (i + 1) + ". " + item.text + waktu;
-    }).join("\n");
-  } else {
-    return label + " kosong 😒";
-  }
-}
-
-function renderCards() {
-  // Reminder cards
-  const rBox = document.getElementById("reminderCards");
-  rBox.innerHTML = reminders.map((r, i) => `
-    <div class="card ${r.done ? "done" : "pending"}">
-      <h3>Rutinitas #${i+1}</h3>
-      <p>${r.text}</p>
-      <p>${r.time || "tanpa jam"}</p>
-      <p>Status: ${r.done ? "✅ selesai" : "⏳ pending"}</p>
-      <button onclick="markDone('reminder', ${i})">
-        ${r.done ? "↩️ Batal" : "✅ Selesai"}
-      </button>
-    </div>
-  `).join("");
-
-  // Note cards
-  const nBox = document.getElementById("noteCards");
-  nBox.innerHTML = notes.map((n, i) => `
-    <div class="card">
-      <h3>Note #${i+1}</h3>
-      <p>${n.text}</p>
-    </div>
-  `).join("");
-
-  // Schedule cards
-  const sBox = document.getElementById("scheduleCards");
-  sBox.innerHTML = schedules.map((s, i) => `
-    <div class="card ${s.status}">
-      <h3>Jadwal #${i+1}</h3>
-      <p>${s.text}</p>
-      <p>${s.date}</p>
-      <p>Status: ${s.status}</p>
-      <button onclick="markDone('schedule', ${i})">
-        ${s.status === "done" ? "↩️ Batal" : "✅ Selesai"}
-      </button>
-    </div>
-  `).join("");
-
-  // Alarm cards
-  const aBox = document.getElementById("alarmCards");
-  aBox.innerHTML = alarms.map((a, i) => `
-    <div class="card ${a.status}">
-      <h3>Alarm #${i+1}</h3>
-      <p>${a.text}</p>
-      <p>${a.time}</p>
-      <p>Status: ${a.status}</p>
-      <button onclick="markDone('alarm', ${i})">
-        ${a.status === "done" ? "↩️ Batal" : "✅ Selesai"}
-      </button>
-    </div>
-  `).join("");
-
-// Mood cards
-const mBox = document.getElementById("moodCards");
-mBox.innerHTML = moods.slice(-7).map((m, i) => `
-  <div class="card">
-    <h3>Mood #${moods.length - 6 + i}</h3>
-    <p>Skor: ${m.score} / 5</p>
-    <p>${m.note || "(tanpa catatan)"}</p>
-    <p>${new Date(m.date).toLocaleDateString("id-ID")}</p>
-  </div>
-`).join("") + `
-  <div class="card">
-    <h3>+ Tambah Mood</h3>
-    <div class="mood-scale">
-      ${[1,2,3,4,5].map(v=>`
-        <button class="mood-btn" onclick="addMood(${v})">${v}</button>
-      `).join("")}
-    </div>
-    <input type="text" id="moodNote" placeholder="Catatan singkat..." style="margin-top:6px;width:100%;padding:6px;border-radius:6px;border:1px solid #ccc;">
-    <canvas id="moodChart"></canvas>
-  </div>
-`;
-
-// Render grafik
-if (document.getElementById("moodChart")) {
-  let ctx = document.getElementById("moodChart").getContext("2d");
-  new Chart(ctx, {
-    type: "line",
-    data: {
-      labels: moods.slice(-7).map(m => new Date(m.date).toLocaleDateString("id-ID")),
-      datasets: [{
-        label: "Mood (1-5)",
-        data: moods.slice(-7).map(m => m.score),
-        borderColor: "#e91e63",
-        backgroundColor: "rgba(233,30,99,0.2)",
-        tension: 0.3,
-        fill: true
-      }]
-    },
-    options: {
-      scales: {
-        y: { min: 1, max: 5, ticks: { stepSize: 1 } }
-      }
-    }
-  });
-}
-}
-
-function markDone(type, index) {
-  if (type === "reminder" && reminders[index]) {
-    reminders[index].done = !reminders[index].done;
-  }
-  if (type === "schedule" && schedules[index]) {
-    schedules[index].status = (schedules[index].status === "done") ? "pending" : "done";
-  }
-  if (type === "alarm" && alarms[index]) {
-    alarms[index].status = (alarms[index].status === "done") ? "active" : "done";
-  }
-  saveData();
+  reminders = await dbGetAll("reminders");
+  notes = await dbGetAll("notes");
+  schedules = await dbGetAll("schedules");
+  moods = await dbGetAll("moods");
+  pet = (await dbGetAll("pet"))[0] || { streak: 0, lastActive: "" };
   renderCards();
 }
 
-function addMood(score) {
-  let note = document.getElementById("moodNote").value.trim();
-  moods.push({
-    score,
-    note,
-    date: new Date().toISOString()
-  });
-  saveData();
-  addMsg("lin", `hmm.. jadi mood kamu hari ini ${score}/5 ya? Catet nih 🙄`);
+async function saveData() {
+  await dbSetAll("reminders", reminders);
+  await dbSetAll("notes", notes);
+  await dbSetAll("schedules", schedules);
+  await dbSetAll("moods", moods);
+  await dbSetAll("pet", [pet]);
+  renderCards();
 }
 
-function startBreath() {
-  document.getElementById("breathModal").classList.remove("hidden");
-  let circle = document.getElementById("breathCircle");
-  let text = document.getElementById("breathText");
+// =============================
+// 📦 Render Cards
+// =============================
+function renderCards() {
+  const rBox = document.getElementById("reminderCards");
+  const nBox = document.getElementById("noteCards");
+  const sBox = document.getElementById("scheduleCards");
+  const mBox = document.getElementById("moodCards");
+  const pBox = document.getElementById("petCard");
 
-  let step = 0;
-  breathInterval = setInterval(() => {
-    step = (step + 1) % 3;
-    if (step === 0) { 
-      text.textContent = "Tarik napas (4 detik)...";
-      circle.style.transform = "scale(1.5)";
-    }
-    else if (step === 1) {
-      text.textContent = "Tahan (4 detik)...";
-      circle.style.transform = "scale(1.5)";
-    }
-    else if (step === 2) {
-      text.textContent = "Buang napas (6 detik)...";
-      circle.style.transform = "scale(1)";
-    }
-  }, 4000);
+  rBox.innerHTML = reminders.map((r, i) =>
+    `<div class="card"><h3>Rutinitas #${i+1}</h3><p>${escapeHtml(r.text || "")}</p></div>`
+  ).join("");
+
+  nBox.innerHTML = notes.map((n, i) =>
+    `<div class="card"><h3>Catatan #${i+1}</h3><p>${escapeHtml(n.text || "")}</p></div>`
+  ).join("");
+
+  sBox.innerHTML = schedules.map((s, i) =>
+    `<div class="card"><h3>Jadwal #${i+1}</h3><p>${escapeHtml(s.text || "")}</p></div>`
+  ).join("");
+
+  mBox.innerHTML = moods.map((m, i) =>
+    `<div class="card"><h3>Mood #${i+1}</h3><p>${escapeHtml(m.text || "")}</p></div>`
+  ).join("");
+
+  pBox.innerHTML = `<div class="card"><h3>Virtual Pet 🐾</h3><p>Streak: ${pet.streak || 0} hari</p></div>`;
 }
 
-function closeBreath() {
-  document.getElementById("breathModal").classList.add("hidden");
-  clearInterval(breathInterval);
+function escapeHtml(s) {
+  return (s || "").replace(/[&<>"']/g, (c) =>
+    ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;" }[c])
+  );
 }
 
-// Parsing waktu natural
-function parseTime(text) {
-  text = text.toLowerCase();
-  let now = new Date();
+// =============================
+// 📦 Export / Import JSON
+// =============================
+const exportBtn = document.getElementById("exportBtn");
+const importBtn = document.getElementById("importBtn");
+const importFile = document.getElementById("importFile");
 
-  // 1️⃣ Format "1 menit lagi" / "10 menit lagi" / "2 jam lagi"
-  let m = text.match(/(\d+)\s*menit lagi/);
-  if (m) {
-    now.setMinutes(now.getMinutes() + parseInt(m[1]));
-    return now.toTimeString().slice(0,5);
-  }
-  m = text.match(/(\d+)\s*jam lagi/);
-  if (m) {
-    now.setHours(now.getHours() + parseInt(m[1]));
-    return now.toTimeString().slice(0,5);
-  }
-
-  // 2️⃣ Format "jam setengah 4" (berarti 03:30)
-  let half = text.match(/setengah\s*(\d{1,2})/);
-  if (half) {
-    let h = parseInt(half[1]) - 1; // setengah 4 = jam 3 lewat 30
-    if (text.includes("sore") || text.includes("malam") || text.includes("siang")) {
-      if (h < 12) h += 12;
-    }
-    return ("0" + h).slice(-2) + ":30";
-  }
-
-  // 3️⃣ Format "jam 12 30an siang"
-  let fuzzy = text.match(/jam\s*(\d{1,2})\s*(\d{2})/);
-  if (fuzzy) {
-    let h = parseInt(fuzzy[1]);
-    let mnt = parseInt(fuzzy[2]);
-    if (text.includes("siang") || text.includes("sore") || text.includes("malam")) {
-      if (h < 12) h += 12;
-    }
-    return ("0" + h).slice(-2) + ":" + ("0" + mnt).slice(-2);
-  }
-
-  // 4️⃣ Format standar lama: "jam 7", "jam 7.30", "19:45"
-  let match = text.match(/jam\s*(\d{1,2})([:.](\d{2}))?/);
-  if (match) {
-    let hour = parseInt(match[1]);
-    let minute = match[3] ? parseInt(match[3]) : 0;
-    if (text.includes("pagi")) {
-      if (hour === 12) hour = 0;
-    } else if (text.includes("siang") || text.includes("sore") || text.includes("malam")) {
-      if (hour < 12) hour += 12;
-    }
-    if (hour > 23) hour = 23;
-    if (minute > 59) minute = 59;
-    return ("0" + hour).slice(-2) + ":" + ("0" + minute).slice(-2);
-  }
-
-  return null;
-}
-// Parsing repeat
-function parseRepeat(text) {
-  text = text.toLowerCase();
-  if (text.includes("tiap hari")) return "daily";
-  let days = [];
-  let daftarHari = ["minggu","senin","selasa","rabu","kamis","jumat","sabtu"];
-  daftarHari.forEach(h => { if (text.includes(h)) days.push(h); });
-  return days.length ? days : null;
-}
-
-// Bersihin teks alarm
-function cleanTextForAlarm(text) {
-  let cleaned = text.toLowerCase();
-  cleaned = cleaned.replace(/\b(note|rutinitas|jadwal|alarm)\b/g, "");
-  cleaned = cleaned.replace(/\b(jam|pagi|siang|sore|malam|tiap|hari|senin|selasa|rabu|kamis|jumat|sabtu|minggu)\b/g, "");
-  cleaned = cleaned.replace(/\s+/g, " ").trim();
-  return cleaned || "aktivitasmu";
-}
-
-// =======================
-// ⏰ Alarm System
-// =======================
-function addAlarm(text) {
-  let time = parseTime(text);
-  let core = cleanTextForAlarm(text);
-  let repeat = parseRepeat(text) || null;
-  if (time) {
-    alarms.push({
-      id: "a-" + Date.now(),
-      text: core,
-      time: time,
-      repeat: repeat,
-      status: "active",
-      createdAt: new Date().toISOString()
-    });
-    saveData();
-  }
-}
-
-// Cek alarm tiap menit
-setInterval(() => {
-  let now = new Date();
-  let hh = ("0" + now.getHours()).slice(-2);
-  let mm = ("0" + now.getMinutes()).slice(-2);
-  let current = hh + ":" + mm;
-  let day = ["minggu","senin","selasa","rabu","kamis","jumat","sabtu"][now.getDay()];
-
-  alarms.forEach(a => {
-    let matchHari = false;
-    if (a.repeat === "daily") matchHari = true;
-    else if (Array.isArray(a.repeat)) matchHari = a.repeat.includes(day);
-    else matchHari = true;
-
-    if (matchHari && a.time === current && a.status === "active") {
-      addMsg("lin", `Hei! sekarang jam ${a.time}, waktunya ${a.text}! 😤`);
-      showNotification("Lin Tsundere ⏰", `Hei! Waktunya ${a.text}! Jangan males!`);
-      if (a.repeat) a.status = "active"; else a.status = "done";
-      saveData();
-    }
-  });
-}, 60000);
-
-// =======================
-// 🎮 Command Handler
-// =======================
-function handleInput(msg) {
-  // Slash command cepat
-  if (msg.startsWith("/export")) { exportData(); return; }
-  if (msg.startsWith("/import")) {
-    document.getElementById("importFile").click();
-    addMsg("lin", "pilih file JSON-mu ya.");
-    return;
-  }
-
-// Latihan Napas
-if (msg.startsWith("/napas") || msg.includes("latihan napas")) {
-  startBreath();
-  addMsg("lin", "ayo, ikutin aku napas 4-4-6 biar tenang 😌");
-  return;
-}
-
-// =======================
-// 🎮 Mini Game: Suit
-// =======================
-if (msg.startsWith("/suit")) {
-  suitMode = true;
-  addMsg("lin", "oke, ayo main suit! Pilih: batu, gunting, atau kertas ✊✌️🖐️");
-  return;
-}
-
-if (suitMode) {
-  let choices = ["batu", "gunting", "kertas"];
-  if (choices.includes(msg)) {
-    suitMode = false; // reset setelah 1 ronde
-    let linChoice = choices[Math.floor(Math.random() * 3)];
-
-    let result = "";
-    if (msg === linChoice) {
-      result = "seri 🙄";
-    } else if (
-      (msg === "batu" && linChoice === "gunting") ||
-      (msg === "gunting" && linChoice === "kertas") ||
-      (msg === "kertas" && linChoice === "batu")
-    ) {
-      result = "ya ampun... kamu menang 😤";
-    } else {
-      result = "haha, aku menang 😎";
-    }
-
-    addMsg("lin", `kamu pilih **${msg}**, aku pilih **${linChoice}** → ${result}`);
-    return;
-  } else {
-    addMsg("lin", "pilihannya cuma batu, gunting, atau kertas ya 😒");
-    return;
-  }
-}
-
-  // =======================
-  // 🎮 Mini Game: Tebak Angka
-  // =======================
-  if (msg.startsWith("/game")) {
-    currentGame = {
-      answer: Math.floor(Math.random() * 10) + 1, // angka 1–10 random
-      tries: 0
-    };
-    addMsg("lin", "udah aku pikirin angka 1–10. Coba tebak kalau berani 😏");
-    return;
-  }
-
-  if (currentGame) {
-    let guess = parseInt(msg); // cek input user angka
-    if (!isNaN(guess)) {
-      currentGame.tries++;
-      if (guess === currentGame.answer) {
-        addMsg("lin", `huh... kamu bisa nebak juga? Angkaku memang ${guess}. 🎉 (percobaan ke-${currentGame.tries})`);
-        currentGame = null; // reset game
-      } else if (guess < currentGame.answer) {
-        addMsg("lin", "salah~ angkamu terlalu kecil 😒");
-      } else {
-        addMsg("lin", "hehe, kebesaran itu 🙄");
-      }
-      return; // biar nggak lanjut ke handler lain
-    }
-  }
-
-  
-   // Rutinitas
-  if (msg.includes("rutinitas")) {
-}
-
-// Slash command cepat
-if (msg.startsWith("/export")) { exportData(); return; }
-if (msg.startsWith("/import")) {
-  document.getElementById("importFile").click();
-  addMsg("lin", "pilih file JSON-mu ya.");
-  return;
-}
-  // Rutinitas
-  if (msg.includes("rutinitas")) {
-    let time = parseTime(msg);
-    let repeat = parseRepeat(msg);
-    let core = cleanTextForAlarm(msg);
-    reminders.push({ text: core, time, repeat, done: false });
-    saveData();
-    addMsg("lin", `udah aku masukin rutinitas: "${core}" jam ${time||"tanpa jam"} 😤`);
-  }
-
-  // Note
-  else if (msg.includes("note")) {
-    let core = msg.replace("note", "").trim();
-    notes.push({ text: core, createdAt: new Date().toISOString() });
-    saveData();
-    addMsg("lin", `udah aku catet di note: "${core}" 📝`);
-  }
-
-  // Jadwal
-  else if (msg.includes("jadwal")) {
-    if (msg.includes("apa") || msg.includes("ada") || msg.includes("lihat")) {
-      addMsg("lin", formatList(schedules, "jadwalmu"));
-    } else {
-      let core = msg.replace("jadwal", "").trim();
-      schedules.push({ text: core, date: new Date().toISOString().split("T")[0], status:"pending" });
-      saveData();
-      addMsg("lin", `oke, aku masukin ke jadwalmu: "${core}" 📅`);
-    }
-  }
-
-  // Alarm
-  else if (msg.includes("alarm")) {
-    if (msg.includes("lihat")) {
-      if (alarms.length) {
-        let list = "alarm aktif:\n" + alarms.map((a,i)=>{
-          let repeatInfo = a.repeat==="daily"?"tiap hari": Array.isArray(a.repeat)?a.repeat.join(", "):"sekali";
-          return (i+1)+". "+a.time+" "+a.text+" ("+repeatInfo+", "+a.status+")";
-        }).join("\n");
-        addMsg("lin", list);
-      } else addMsg("lin", "nggak ada alarm yang aktif 😑");
-    } else {
-      addAlarm(msg);
-      addMsg("lin", "oke alarmnya udah aku set ⏰");
-    }
-  }
-
-  // Hapus data
-  else if (msg.includes("hapus")) {
-    let targetArr = null;
-    if (msg.includes("rutinitas")) targetArr = reminders;
-    else if (msg.includes("note")) targetArr = notes;
-    else if (msg.includes("jadwal")) targetArr = schedules;
-    else if (msg.includes("alarm")) targetArr = alarms;
-
-    if (targetArr) {
-      if (msg.includes("semua")) {
-        targetArr.length = 0;
-        saveData();
-        addMsg("lin", "semua data udah aku hapus. puas? 😒");
-      }
-      else if (msg.includes("terakhir")) {
-        let removed = targetArr.pop();
-        saveData();
-        if (removed&&text) addMsg("lin", `${removed.text} udah aku hapus 🙄`);
-      }
-      else if (msg.match(/ke-\d+/)) {
-        let index = parseInt(msg.match(/ke-(\d+)/)[1]) - 1;
-        if (targetArr[index]) {
-          let removed = targetArr.splice(index,1)[0];
-          saveData();
-          if (removed&&text) addMsg("lin", `udah aku hapus: "${removed.text}" 🙄`);
-        }
-      }
-    }
-  }
-
-  // Edit data
-  else if (msg.includes("edit") && msg.match(/ke-\d+/) && msg.includes("jadi")) {
-    let index = parseInt(msg.match(/ke-(\d+)/)[1]) - 1;
-    let newText = msg.split("jadi")[1].trim();
-    if (msg.includes("rutinitas") && reminders[index]) {
-      reminders[index].text = newText;
-      saveData();
-      addMsg("lin", `rutinitas ke-${index+1} udah aku ganti jadi "${newText}" 😤`);
-    }
-    else if (msg.includes("note") && notes[index]) {
-      notes[index].text = newText;
-      saveData();
-      addMsg("lin", `note ke-${index+1} udah aku ganti jadi "${newText}" 🙄`);
-    }
-    else if (msg.includes("jadwal") && schedules[index]) {
-      schedules[index].text = newText;
-      saveData();
-      addMsg("lin", `jadwal ke-${index+1} udah aku ganti jadi "${newText}" 😏`);
-    }
-    else if (msg.includes("alarm") && alarms[index]) {
-      alarms[index].text = newText;
-      saveData();
-      addMsg("lin", `alarm ke-${index+1} udah aku ganti jadi "${newText}" ⏰`);
-    }
-  }
-
-  // Help
-  else if (msg.includes("fitur") || msg.includes("help")) {
-    addMsg("lin", "fiturku: rutinitas, note, jadwal, alarm, hapus/edit data, notifikasi, tema, onboarding 😤");
-  }
-
-  // Fallback
-  else {
-    let replies = [
-      "huh? aku nggak ngerti maksudmu 😒",
-      "jelasin yang bener dong...",
-      "apaan sih, bikin ribet aja 🙄"
-    ];
-    addMsg("lin", replies[Math.floor(Math.random()*replies.length)]);
-  }
-}
-
-// =======================
-// 🚀 Init Pertama
-// =======================
-(async function init(){
-  document.getElementById("text").focus();
-  await loadData();
-  await loadTheme();
-  await checkOnboard();
-
-  
- document.getElementById("exportBtn").addEventListener("click", exportData);
-
-document.getElementById("importBtn").addEventListener("click", () => {
-  document.getElementById("importFile").click();
-});
-
-document.getElementById("importFile").addEventListener("change", function () {
-  const file = (this.files || [])[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    importDataFromJSON(e.target.result);
-    this.value = ""; // reset input
+if (exportBtn) {
+  exportBtn.onclick = async () => {
+    const data = { reminders, notes, schedules, moods, pet };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "lin-data.json"; a.click();
+    URL.revokeObjectURL(url);
+    addMsg("lin", "Hmph, aku udah siapin file backup kamu. Jangan hilangin, ya 🙄");
   };
-  reader.readAsText(file);
-});
+}
 
-  if ("Notification" in window && Notification.permission !== "granted") {
-    Notification.requestPermission();
-  }
+if (importBtn) {
+  importBtn.onclick = () => importFile?.click();
+}
+if (importFile) {
+  importFile.onchange = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text || "{}");
+      reminders = Array.isArray(data.reminders) ? data.reminders : [];
+      notes = Array.isArray(data.notes) ? data.notes : [];
+      schedules = Array.isArray(data.schedules) ? data.schedules : [];
+      moods = Array.isArray(data.moods) ? data.moods : [];
+      pet = data.pet && typeof data.pet === "object" ? data.pet : { streak:0, lastActive:"" };
+      await saveData();
+      addMsg("lin", "Udah aku impor. Jangan bikin berantakan lagi, ngerti?! 😤");
+      showNotification("Import Berhasil", "Data kamu sudah dipulihkan.");
+    } catch (err) {
+      console.error(err);
+      addMsg("lin", "File-nya apaan sih? Itu bukan JSON yang bener 🙄");
+    } finally {
+      e.target.value = "";
+    }
+  };
+}
 
-  addMsg("lin", "Huh? Jadi kamu yang udah instal aku? Jangan bikin aku nyesel ya 😤");
+// =============================
+// 🌗 Theme Toggle
+// =============================
+function toggleTheme() {
+  const current = document.documentElement.getAttribute("data-theme") || "light";
+  const next = current === "dark" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  try { localStorage.setItem("theme", next); } catch {}
+}
+const themeBtn = document.getElementById("themeToggle");
+if (themeBtn) themeBtn.onclick = toggleTheme;
+(function initTheme(){
+  const saved = (localStorage.getItem("theme") || "light");
+  document.documentElement.setAttribute("data-theme", saved);
 })();
 
-speechSynthesis.onvoiceschanged = () => {
-  speechSynthesis.getVoices();
+// =============================
+// 🔔 Browser Notifications
+// =============================
+function requestNotifPermission() {
+  if (!("Notification" in window)) return;
+  if (Notification.permission === "default") Notification.requestPermission();
+}
+function showNotification(title, body) {
+  if (!("Notification" in window)) return;
+  if (Notification.permission !== "granted") return;
+  if (navigator.serviceWorker && navigator.serviceWorker.getRegistration) {
+    navigator.serviceWorker.getRegistration().then(reg => {
+      if (reg) reg.showNotification(title, { body, icon: "icon-192.png" });
+      else new Notification(title, { body, icon: "icon-192.png" });
+    });
+  } else {
+    new Notification(title, { body, icon: "icon-192.png" });
+  }
+}
+
+// =============================
+// 📝 Ringkasan Harian
+// =============================
+function makeRecap(when) {
+  return [
+    `Recap ${when}:`,
+    `📌 Rutinitas: ${reminders.length}`,
+    `📒 Catatan: ${notes.length}`,
+    `📅 Jadwal: ${schedules.length}`,
+    `📊 Mood tercatat: ${moods.length}`,
+    `🐾 Streak: ${pet.streak || 0}`
+  ].join("\n");
+}
+
+let lastRecapKey = "";
+function checkDailyRecap() {
+  const now = new Date();
+  const h = now.getHours();
+  const keyDate = now.toISOString().slice(0,10);
+  if (h === 7) {
+    const key = keyDate + "|pagi";
+    if (lastRecapKey !== key) {
+      lastRecapKey = key;
+      const msg = makeRecap("pagi");
+      addMsg("lin", `Heh, bangun! ${msg}`);
+      showNotification("Recap Pagi", "Jangan malas, cek rutinitas & jadwalmu!");
+    }
+  } else if (h === 21) {
+    const key = keyDate + "|malam";
+    if (lastRecapKey !== key) {
+      lastRecapKey = key;
+      const msg = makeRecap("malam");
+      addMsg("lin", `Udahan mainnya. ${msg}`);
+      showNotification("Recap Malam", "Saatnya review hari ini.");
+    }
+  }
+}
+setInterval(checkDailyRecap, 60000);
+
+// =============================
+// 💬 Chat Message
+// =============================
+function addMsg(sender, text) {
+  const chat = document.getElementById("chat");
+  const row = document.createElement("div");
+  row.className = "msg-row " + sender;
+
+  const avatar = document.createElement("div");
+  avatar.className = "avatar " + sender;
+  avatar.textContent = sender === "lin" ? "L" : "U";
+
+  const msg = document.createElement("div");
+  msg.className = "msg";
+  msg.textContent = text;
+
+  row.appendChild(avatar);
+  row.appendChild(msg);
+  chat.appendChild(row);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+// =============================
+// 🎮 Scene Manager
+// =============================
+function playScene(id) {
+  if (typeof id === "function") { id(); return; }
+  const scene = scenes[id];
+  if (!scene) return;
+  addMsg("lin", scene.text);
+  if (scene.choices && scene.choices.length > 0) {
+    const chat = document.getElementById("chat");
+    const btnRow = document.createElement("div");
+    btnRow.className = "choice-row";
+    scene.choices.forEach((c) => {
+      const btn = document.createElement("button");
+      btn.textContent = c.label;
+      btn.onclick = () => {
+        addMsg("user", c.label);
+        chat.removeChild(btnRow);
+        playScene(c.next);
+      };
+      btnRow.appendChild(btn);
+    });
+    chat.appendChild(btnRow);
+    chat.scrollTop = chat.scrollHeight;
+  }
+}
+
+// =============================
+// 📝 Input Handler
+// =============================
+function send() {
+  const input = document.getElementById("text");
+  const text = input.value.trim();
+  if (!text) return;
+  addMsg("user", text);
+  input.value = "";
+
+  if (pendingAction) {
+    handlePendingAction(text);
+  } else {
+    addMsg("lin", "Hei! Jangan ngetik sembarangan, pilih aja 🙄");
+  }
+}
+
+async function handlePendingAction(text) {
+  if (pendingAction === "add_reminder") {
+    reminders.push({ text, time: null, done: false });
+    await saveData();
+    addMsg("lin", `Udah aku catet: "${text}". Jangan males ngerjain ya 😤`);
+    showNotification("Rutinitas dibuat", text);
+  } else if (pendingAction === "add_note") {
+    notes.push({ text, createdAt: new Date().toISOString() });
+    await saveData();
+    addMsg("lin", `Catatan "${text}" udah aku simpen 🙄`);
+    showNotification("Catatan disimpan", text);
+  } else if (pendingAction === "add_schedule") {
+    schedules.push({ text, date: null, done: false });
+    await saveData();
+    addMsg("lin", `Jadwal "${text}" udah aku atur... jangan telat! 😒`);
+    showNotification("Jadwal dibuat", text);
+  } else if (pendingAction === "add_mood") {
+    moods.push({ text, date: new Date().toISOString() });
+    await saveData();
+    addMsg("lin", `Mood kamu "${text}" udah aku catet. Jangan pura-pura kuat 🙄`);
+  } else if (pendingAction === "game_tebak") {
+    const guess = parseInt(text, 10);
+    if (isNaN(guess)) {
+      addMsg("lin", "Itu bukan angka, dasar bego! 😤");
+      return;
+    } else if (guess === gameNumber) {
+      addMsg("lin", `...Hmph, iya benar ${guess}. Jangan senyum-senyum gitu! 🙈`);
+      pendingAction = null;
+      hideInput();
+      playScene("intro");
+      return;
+    } else {
+      addMsg("lin", `Salah! Bukan ${guess}. Coba lagi kalau berani 😏`);
+      return;
+    }
+  }
+
+  pendingAction = null;
+  hideInput();
+  playScene("intro");
+}
+
+// =============================
+// 🎭 Show/Hide Input
+// =============================
+function showInput(placeholder = "Ketik di sini...") {
+  const box = document.getElementById("input");
+  const text = document.getElementById("text");
+  box.classList.remove("hidden");
+  text.placeholder = placeholder;
+  text.focus();
+}
+function hideInput() {
+  document.getElementById("input").classList.add("hidden");
+  document.getElementById("text").value = "";
+}
+
+// =============================
+// 📚 Scene Definitions
+// =============================
+const scenes = {
+  intro: {
+    text: "Hei! Mau ngapain hari ini? Jangan manja sama aku 🙄",
+    choices: [
+      { label: "Rutinitas", next: "menu_rutinitas" },
+      { label: "Catatan", next: "menu_catatan" },
+      { label: "Jadwal", next: "menu_jadwal" },
+      { label: "Mood", next: "menu_mood" },
+      { label: "Game", next: "menu_game" },
+      { label: "Quotes/Jokes", next: "menu_fun" }
+    ]
+  },
+
+  // === Rutinitas ===
+  menu_rutinitas: {
+    text: "Rutinitas ya? Mau bikin baru atau lihat daftar?",
+    choices: [
+      { label: "Tambah rutinitas", next: "add_rutinitas_step1" },
+      { label: "Lihat semua", next: () => {
+          if (!reminders.length) addMsg("lin", "Rutinitas kamu kosong, payah 🙄");
+          else addMsg("lin", "Rutinitas:\n" + reminders.map((r,i)=>`${i+1}. ${r.text}`).join("\n"));
+          playScene("intro");
+        }},
+      { label: "Balik", next: "intro" }
+    ]
+  },
+  add_rutinitas_step1: {
+    text: "Hah?! Emang kamu bisa disiplin? 😤",
+    choices: [
+      { label: "Tentu aja bisa!", next: "add_rutinitas_step2" },
+      { label: "Kayaknya nggak deh 😅", next: "add_rutinitas_step2" }
+    ]
+  },
+  add_rutinitas_step2: {
+    text: "Hmph, bodo amat! Kalau kamu serius...",
+    choices: [
+      { label: "Aku serius kok 🙄", next: () => {
+          addMsg("lin", "Ya udah, coba tulis rutinitasmu di bawah 🙄");
+          pendingAction = "add_reminder";
+          showInput("contoh: jam 7 pagi bangun");
+        }}
+    ]
+  },
+
+  // === Catatan ===
+  menu_catatan: {
+    text: "Catatan? Jangan-jangan kamu tulis nama aku ya 😏",
+    choices: [
+      { label: "Tambah catatan", next: "add_catatan_step1" },
+      { label: "Lihat catatan", next: () => {
+          if (!notes.length) addMsg("lin", "Catatanmu kosong 🙄");
+          else addMsg("lin", "Catatan:\n" + notes.map((n,i)=>`${i+1}. ${n.text}`).join("\n"));
+          playScene("intro");
+        }},
+      { label: "Balik", next: "intro" }
+    ]
+  },
+  add_catatan_step1: {
+    text: "Catatan? Jangan-jangan isinya nama aku lagi 😏",
+    choices: [
+      { label: "Iya dong 😳", next: "add_catatan_step2" },
+      { label: "Bukan lah!", next: "add_catatan_step2" }
+    ]
+  },
+  add_catatan_step2: {
+    text: "Dasar aneh... yaudah deh.",
+    choices: [
+      { label: "Aku tulis sekarang!", next: () => {
+          addMsg("lin", "Tulis catatanmu di bawah, jangan aneh-aneh 😒");
+          pendingAction = "add_note";
+          showInput("contoh: beli kopi");
+        }}
+    ]
+  },
+
+  // === Jadwal ===
+  menu_jadwal: {
+    text: "Jadwal? Jangan-jangan kamu sering telat ya 🙄",
+    choices: [
+      { label: "Tambah jadwal", next: "add_jadwal_step1" },
+      { label: "Lihat jadwal", next: () => {
+          if (!schedules.length) addMsg("lin", "Jadwalmu kosong 🙄");
+          else addMsg("lin", "Jadwal:\n" + schedules.map((s,i)=>`${i+1}. ${s.text}`).join("\n"));
+          playScene("intro");
+        }},
+      { label: "Balik", next: "intro" }
+    ]
+  },
+  add_jadwal_step1: {
+    text: "Yakin bisa patuh sama jadwal? Jangan PHP ya 😒",
+    choices: [
+      { label: "Pasti bisa!", next: "add_jadwal_step2" },
+      { label: "Hmm... coba aja dulu", next: "add_jadwal_step2" }
+    ]
+  },
+  add_jadwal_step2: {
+    text: "Baiklah... aku kasih kesempatan.",
+    choices: [
+      { label: "Oke, aku tulis!", next: () => {
+          addMsg("lin", "Tulis jadwalmu di bawah, jangan telat! 😤");
+          pendingAction = "add_schedule";
+          showInput("contoh: Rapat jam 9 pagi");
+        }}
+    ]
+  },
+
+  // === Mood ===
+  menu_mood: {
+    text: "Mood kamu hari ini gimana? Jangan jawab 'b aja' 😒",
+    choices: [
+      { label: "Isi mood sekarang", next: "add_mood_step1" },
+      { label: "Lihat mood", next: () => {
+          if (!moods.length) addMsg("lin", "Moodmu belum ada 🙄");
+          else addMsg("lin", "Mood:\n" + moods.map((m,i)=>`${i+1}. ${m.text}`).join("\n"));
+          playScene("intro");
+        }},
+      { label: "Balik", next: "intro" }
+    ]
+  },
+  add_mood_step1: {
+    text: "Jangan bohong soal perasaanmu, aku bisa tau kok 😏",
+    choices: [
+      { label: "Serius, aku jujur!", next: "add_mood_step2" },
+      { label: "Eh, ketahuan ya 😅", next: "add_mood_step2" }
+    ]
+  },
+  add_mood_step2: {
+    text: "Ya udah... coba tulis moodmu sekarang.",
+    choices: [
+      { label: "Oke!", next: () => {
+          addMsg("lin", "Tulis mood kamu di bawah ya 🙄");
+          pendingAction = "add_mood";
+          showInput("contoh: Senang, sedih, capek");
+        }}
+    ]
+  },
+
+  // === Game ===
+  menu_game: {
+    text: "Mau main apa sih sama aku? 😒",
+    choices: [
+      { label: "Tebak Angka", next: "game_tebak_start" },
+      { label: "Balik", next: "intro" }
+    ]
+  },
+  game_tebak_start: {
+    text: "Aku udah milih angka 1 sampai 10... coba tebak kalau berani! 🙄",
+    choices: [
+      { label: "Mulai tebak!", next: () => {
+          gameNumber = Math.floor(Math.random() * 10) + 1;
+          pendingAction = "game_tebak";
+          showInput("Tebak angkanya (1-10)...");
+        }}
+    ]
+  },
+
+  // === Fun ===
+  menu_fun: {
+    text: "Heh, kamu nyari hiburan dariku? Dasar aneh 😤",
+    choices: [
+      { label: "Kutipan semangat", next: () => showQuote("quote") },
+      { label: "Jokes receh", next: () => showQuote("joke") },
+      { label: "Balik", next: "intro" }
+    ]
+  }
 };
+
+// =============================
+// 😂 Quotes & Jokes
+// =============================
+const quotes = [
+  "Kamu lebih kuat dari yang kamu kira 🙄",
+  "Jangan males, nanti aku yang repot 😤",
+  "Sekali gagal nggak berarti kamu pecundang selamanya, ngerti?!"
+];
+
+const jokes = [
+  "Kenapa laptop nggak bisa tidur? ... Karena masih ada *task manager*! 🤭",
+  "Tahu nggak bedanya kamu sama kopi? ... Kopi bikin melek, kalau kamu bikin deg-degan 🙈",
+  "Aku bukan kalkulator... tapi aku bisa hitung perasaanmu kok 🙄"
+];
+
+function showQuote(type) {
+  const arr = type === "quote" ? quotes : jokes;
+  const item = arr[Math.floor(Math.random() * arr.length)];
+  addMsg("lin", item);
+  playScene("intro");
+}
+
+// =============================
+// 🚀 Init
+// =============================
+window.onload = async () => {
+  await openDB();
+  await loadData();
+  playScene("intro");
+
+  const sendBtn = document.getElementById("sendBtn");
+  const textInput = document.getElementById("text");
+  if (sendBtn) sendBtn.onclick = send;
+  if (textInput) textInput.addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
+
+  requestNotifPermission();
+  checkDailyRecap();
+};
+
+// =============================
+// 🎨 Live2D / PIXI Setup
+// =============================
+const app = new PIXI.Application({
+  view: document.getElementById("linCanvas"),
+  autoStart: true,
+  transparent: true,
+  resizeTo: window,
+});
+
+// 🔧 Resize handler
+function resizeCanvas(model) {
+  if (!app || !model) return;
+  app.renderer.resize(window.innerWidth, window.innerHeight);
+
+  // Posisi tengah bawah layar
+  model.x = app.renderer.width / 2;
+  model.y = app.renderer.height;
+
+  if (window.innerWidth <= 768) {
+    // 📱 HP → zoom in, setengah badan
+    model.scale.set(1.5);
+  } else {
+    // 💻 Desktop → auto fit biar full body kelihatan
+    const scale = Math.min(
+      window.innerWidth / model.width * 0.8,   // fit lebar
+      window.innerHeight / model.height * 0.8 // fit tinggi
+    );
+    model.scale.set(scale);
+  }
+}
+
+(async () => {
+  const model = await PIXI.live2d.Live2DModel.from("models/hiyori/hiyori_pro_t11.model3.json");
+  app.stage.addChild(model);
+
+  // Anchor ke bawah tengah
+  model.anchor.set(1.4, 1.13);
+
+  // 🚀 Resize awal + event listener
+  resizeCanvas(model);
+  window.addEventListener("resize", () => resizeCanvas(model));
+
+  // 📌 Random idle motion tiap 10–15 detik
+  function playRandomIdle() {
+    const motions = ["Idle", "TapBody", "Happy"];
+    const random = motions[Math.floor(Math.random() * motions.length)];
+    model.motion(random);
+  }
+  setInterval(playRandomIdle, 10000 + Math.random() * 5000);
+
+  // 📌 Eye tracking
+  app.stage.interactive = true;
+  app.stage.on("pointermove", e => {
+    const pos = e.data.global;
+    model.focus(pos.x, pos.y);
+  });
+
+  // 📌 Drag & drop
+  model.interactive = true;
+  model.buttonMode = true;
+  let dragging = false;
+  let offset = { x: 0, y: 0 };
+
+  model.on("pointerdown", e => {
+    dragging = true;
+    offset.x = e.data.global.x - model.x;
+    offset.y = e.data.global.y - model.y;
+  });
+
+  app.stage.on("pointermove", e => {
+    if (dragging) {
+      model.x = e.data.global.x - offset.x;
+      model.y = e.data.global.y - offset.y;
+    }
+  });
+
+  app.stage.on("pointerupoutside", () => dragging = false);
+  app.stage.on("pointerup", () => dragging = false);
+
+  // 📌 HitAreas
+  model.on("hit", hitAreas => {
+    if (hitAreas.includes("Head")) model.motion("TapHead");
+    if (hitAreas.includes("Body")) model.motion("TapBody");
+  });
+
+  // 📌 Klik kiri / kanan untuk mood
+  model.on("pointerdown", e => {
+    const pos = e.data.global;
+    if (pos.x < model.x) {
+      model.motion("Angry");
+    } else if (pos.x > model.x + model.width) {
+      model.motion("Happy");
+    }
+  });
+
+  // 📌 Reaksi tombol Kirim
+  document.getElementById("sendBtn").addEventListener("click", () => {
+    const inputVal = document.getElementById("text").value.toLowerCase();
+    if (inputVal.includes("marah") || inputVal.includes("kesal")) {
+      model.motion("Angry");
+    } else if (inputVal.includes("senang") || inputVal.includes("happy")) {
+      model.motion("Happy");
+    } else {
+      model.motion("TapBody");
+    }
+  });
+})();

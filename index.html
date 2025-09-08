@@ -9,74 +9,61 @@
 </head>
 <body>
   <div id="topbar">
-  <div id="title"><span class="dot"></span> Lin — Asisten Tsundere</div>
-  <div id="actions">
-    <button id="exportBtn" title="Export data JSON">⬇️ Export</button>
-    <button id="importBtn" title="Import data JSON">⬆️ Import</button>
-    <button id="themeToggle" title="Ganti tema">🌗 Tema</button>
-    <input type="file" id="importFile" accept="application/json" class="hidden">
+    <div id="title"><span class="dot"></span> Lin — Asisten Tsundere</div>
+    <div id="actions">
+      <button id="exportBtn" title="Export data JSON">⬇️ Export</button>
+      <button id="importBtn" title="Import data JSON">⬆️ Import</button>
+      <button id="themeToggle" title="Ganti tema">🌗 Tema</button>
+      <input type="file" id="importFile" accept="application/json" class="hidden">
+    </div>
   </div>
-</div>
 
   <div id="wrap">
-    <div id="chatSearch">
-  <input type="text" id="chatSearchInput" placeholder="🔍 Cari di chat...">
-</div>
     <div id="chat"></div>
-    <div id="input">
-      <input type="text" id="text" placeholder="Ketik pesan...">
+    <div id="input" class="hidden">
+      <input type="text" id="text" placeholder="">
       <button id="sendBtn">Kirim</button>
     </div>
   </div>
 
+  <!-- Live2D canvas -->
+  <canvas id="linCanvas"></canvas>
+
   <section id="cards">
     <h2>Data Kamu</h2>
     <div id="searchBox">
-     <input type="text" id="searchInput" placeholder="🔍 Cari di semua card...">
-  </div>
-
+      <input type="text" id="searchInput" placeholder="🔍 Cari di semua card...">
+    </div>
     <div class="card-container">
       <div id="reminderCards"></div>
       <div id="noteCards"></div>
       <div id="scheduleCards"></div>
       <div id="alarmCards"></div>
       <div id="moodCards"></div>
+      <div id="petCard"></div>
     </div>
   </section>
 
-  <!-- Onboarding (sekali tampil) -->
+  <!-- Onboarding -->
   <div id="onboard" class="modal hidden">
     <div class="card">
       <h3>Hei! Jangan bikin aku ngomel ya 😤</h3>
       <p>Aku bisa bikin <b>pengingat</b>, <b>catatan</b>, dan <b>jadwal</b> — lengkap sama notifikasi.</p>
-      <p>Contoh:
-      <br>• <code>rutinitas jam 7 pagi bangun</code>
-      <br>• <code>rutinitas tiap senin jumat jam 8 rapat</code>
-      <br>• <code>note beli kopi</code></p>
       <button id="startBtn">Oke, mulai!</button>
     </div>
   </div>
 
-<!-- 🔵 Latihan Napas Modal -->
-<div id="breathModal" class="hidden">
-  <div class="modal-content">
-    <h2>Latihan Napas 4-4-6</h2>
-    <div id="breathCircle"></div>
-    <p id="breathText">Tarik napas...</p>
-    <button onclick="closeBreath()">Tutup</button>
-  </div>
-</div>
-
-
+  <script src="libs/pixi.min.js"></script>
+  <script src="libs/live2dcubismcore.js"></script>
+  <script src="libs/cubism4.min.js"></script>
   <script src="script.js"></script>
   <script>
-  if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("service-worker.js")
-      .then(() => console.log("Service Worker terdaftar"))
-      .catch(err => console.error("SW gagal:", err));
-  }
-</script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("service-worker.js")
+        .then(() => console.log("Service Worker terdaftar"))
+        .catch(err => console.error("SW gagal:", err));
+    }
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </body>
 </html>

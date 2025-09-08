@@ -45,12 +45,24 @@ body{
 }
 .avatar.lin{background:var(--lin-bg); color:var(--lin-text); border:1px solid rgba(0,0,0,.06)}
 .avatar.user{background:var(--user-bg); color:#333}
+
 .msg{
   padding:8px 12px; border-radius:12px; max-width:78%; white-space:pre-line; line-height:1.35;
   border:1px solid rgba(0,0,0,.06);
 }
-.lin .msg{ background:var(--lin-bg); color:var(--lin-text) }
-.user .msg{ background:var(--user-bg) }
+.lin .msg{ 
+  background: var(--lin-bg);
+  color: var(--lin-text);
+  border: 1px solid var(--accent);
+  border-radius: 12px 12px 12px 0;
+  box-shadow: 0 2px 4px rgba(233,30,99,0.2);
+}
+.user .msg{ 
+  background: var(--user-bg);
+  border: 1px solid #3f51b5;
+  border-radius: 12px 12px 0 12px;
+  box-shadow: 0 2px 4px rgba(63,81,181,0.2);
+}
 
 /* Input row */
 #input{ display:flex; gap:8px; margin-top:10px }
@@ -84,11 +96,6 @@ body{
 
 @keyframes fadeInUp{ from{opacity:0; transform:translateY(6px)} to{opacity:1; transform:translateY(0)} }
 
-/* Utility class */
-.hidden {
-  display: none;
-}
-
 /* === Card Layout === */
 #cards {
   margin-top: 1rem;
@@ -113,23 +120,15 @@ body{
   background: var(--card);
   border-radius: 10px;
   padding: 0.8rem;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+  box-shadow: 0 3px 6px rgba(0,0,0,0.1);
   transition: transform 0.2s;
 }
-
 .card:hover {
-  transform: translateY(-2px);
+  transform: translateY(-3px);
 }
 
-.card h3 {
-  font-size: 1rem;
-  margin: 0 0 0.4rem;
-}
-
-.card p {
-  font-size: 0.9rem;
-  color: var(--muted);
-}
+.card h3 { font-size: 1rem; margin: 0 0 0.4rem; }
+.card p { font-size: 0.9rem; color: var(--muted); }
 
 .card button {
   margin-top: 5px;
@@ -140,45 +139,20 @@ body{
   border-radius: 6px;
   cursor: pointer;
 }
-.card button:hover {
-  opacity: 0.8;
-}
+.card button:hover { opacity: 0.8; }
 
-#actions button {
-  margin-left: 8px;
-  padding: 6px 12px;
-  border-radius: 8px;
-  cursor: pointer;
-}
+.card.done { border-left: 4px solid #4caf50; opacity: 0.9; }
+.card.pending { border-left: 4px solid #ff9800; }
 
-#actions input[type="file"] {
-  display: none;
-}
-.card.done {
-  border-left: 4px solid #4caf50; /* hijau */
-  opacity: 0.9;
-}
-.card.pending {
-  border-left: 4px solid #ff9800; /* oranye */
-}
-
-#searchBox {
-  max-width: 600px;
-  margin: 15px auto;
-  text-align: center;
-}
+/* Search */
+#searchBox { max-width: 600px; margin: 15px auto; text-align: center; }
 #searchBox input {
   width: 90%;
   padding: 8px 12px;
   border-radius: 8px;
   border: 1px solid #ccc;
 }
-
-#chatSearch {
-  max-width: 500px;
-  margin: 10px auto;
-  text-align: center;
-}
+#chatSearch { max-width: 500px; margin: 10px auto; text-align: center; }
 #chatSearch input {
   width: 90%;
   padding: 8px 12px;
@@ -187,11 +161,7 @@ body{
 }
 
 /* Mood Tracker */
-.mood-scale {
-  display: flex;
-  gap: 4px;
-  margin-top: 6px;
-}
+.mood-scale { display: flex; gap: 4px; margin-top: 6px; }
 .mood-btn {
   flex: 1;
   padding: 6px;
@@ -201,28 +171,18 @@ body{
   background: var(--user-bg);
   transition: 0.2s;
 }
-.mood-btn:hover {
-  background: var(--accent);
-  color: #fff;
-}
-#moodChart {
-  margin-top: 10px;
-  max-height: 200px;
-}
+.mood-btn:hover { background: var(--accent); color: #fff; transform: scale(1.1); }
+#moodChart { margin-top: 10px; max-height: 200px; }
 
 /* 🔵 Latihan Napas */
 #breathModal {
-  position: fixed;
-  top: 0; left: 0;
+  position: fixed; top: 0; left: 0;
   width: 100%; height: 100%;
   background: rgba(0,0,0,0.6);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: flex; align-items: center; justify-content: center;
   z-index: 1000;
 }
 #breathModal.hidden { display: none; }
-
 #breathModal .modal-content {
   background: var(--card);
   padding: 20px;
@@ -230,13 +190,68 @@ body{
   text-align: center;
   width: 300px;
 }
-
 #breathCircle {
-  width: 120px;
-  height: 120px;
-  margin: 20px auto;
-  border-radius: 50%;
-  background: var(--accent);
+  width: 120px; height: 120px; margin: 20px auto;
+  border-radius: 50%; background: var(--accent);
   transition: transform 4s ease-in-out;
 }
 
+/* === Week 6 UX Polish === */
+/* Animasi chat Lin */
+.msg-row.lin .msg { animation: linPop 0.3s ease; }
+@keyframes linPop {
+  from { opacity: 0; transform: translateY(10px) scale(0.95); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+/* Avatar Lin shake */
+.msg-row.lin .avatar { animation: tsunShake 0.3s ease; }
+@keyframes tsunShake {
+  0% { transform: translateX(0); }
+  25% { transform: translateX(-3px); }
+  50% { transform: translateX(3px); }
+  75% { transform: translateX(-2px); }
+  100% { transform: translateX(0); }
+}
+
+/* === Dating Sim Choice Buttons === */
+.choice-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+.choice-row button {
+  flex: 1;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--accent);
+  background: var(--card);
+  color: var(--text);
+  cursor: pointer;
+  transition: 0.2s;
+  font-weight: 500;
+}
+.choice-row button:hover {
+  background: var(--accent);
+  color: #fff;
+  transform: scale(1.05);
+}
+
+/* === Live2D Canvas Styling === */
+#linCanvas {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none; /* biar klik UI nggak terganggu */
+  z-index: 0; /* di belakang UI */
+}
+
+/* HP → tampil setengah badan */
+@media (max-width: 768px) {
+  #linCanvas {
+    transform: scale(1.5) translateY(120px);
+    transform-origin: center top;
+  }
+}
