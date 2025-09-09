@@ -8,6 +8,13 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <!-- 🔵 Background -->
+  <img id="bgCanvas" src="bg/room-01.jpg" alt="background">
+
+  <!-- 🔵 Live2D Canvas -->
+  <canvas id="linCanvas"></canvas>
+
+  <!-- 🔵 Topbar -->
   <div id="topbar">
     <div id="title"><span class="dot"></span> Lin — Asisten Tsundere</div>
     <div id="actions">
@@ -18,6 +25,7 @@
     </div>
   </div>
 
+  <!-- 🔵 Chatbox -->
   <div id="wrap">
     <div id="chat"></div>
     <div id="input" class="hidden">
@@ -26,9 +34,14 @@
     </div>
   </div>
 
-  <!-- Live2D canvas -->
-  <canvas id="linCanvas"></canvas>
+  <!-- 🔵 VN Box (opsional untuk style novel) -->
+  <div id="vnBox">
+    <div id="vnName">Lin</div>
+    <div id="vnText"></div>
+    <div id="vnChoices"></div>
+  </div>
 
+  <!-- 🔵 Cards -->
   <section id="cards">
     <h2>Data Kamu</h2>
     <div id="searchBox">
@@ -44,7 +57,7 @@
     </div>
   </section>
 
-  <!-- Onboarding -->
+  <!-- 🔵 Onboarding -->
   <div id="onboard" class="modal hidden">
     <div class="card">
       <h3>Hei! Jangan bikin aku ngomel ya 😤</h3>
@@ -53,10 +66,26 @@
     </div>
   </div>
 
+  <!-- 🔵 Onboarding modal untuk minta nama -->
+  <div id="nameModal" class="modal hidden">
+    <div class="card">
+      <h3>Hei, sebutin nama kamu dulu! 😤</h3>
+      <p>Biar aku nggak manggil kamu "Kamu" terus 🙄</p>
+      <input type="text" id="nameInput" placeholder="Tulis nama kamu di sini">
+      <button id="nameOkBtn">Oke!</button>
+    </div>
+  </div>
+
+  <!-- 🔵 Libraries -->
   <script src="libs/pixi.min.js"></script>
   <script src="libs/live2dcubismcore.js"></script>
   <script src="libs/cubism4.min.js"></script>
-  <script src="script.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <!-- 🔵 Main entry -->
+  <script type="module" src="./js/main.js"></script>
+
+  <!-- 🔵 Service Worker -->
   <script>
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("service-worker.js")
@@ -64,6 +93,5 @@
         .catch(err => console.error("SW gagal:", err));
     }
   </script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </body>
 </html>
